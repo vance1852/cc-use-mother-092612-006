@@ -11,6 +11,11 @@ class AcceptanceTest(unittest.TestCase):
         self.assertFalse(result["first_replayed"])
         self.assertTrue(result["second_replayed"])
         self.assertEqual(1, result["records"])
+        self.assertEqual(20, result["quiz_score"])
+        self.assertEqual(2, result["quiz_effective_events"])
+        self.assertTrue(result["quiz_resend_all_replayed"])
+        self.assertTrue(result["quiz_settled"])
+        self.assertTrue(result["quiz_settle_replayed"])
 
 
 if __name__ == "__main__":

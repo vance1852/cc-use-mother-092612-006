@@ -9,8 +9,80 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .errors import DomainError, ValidationError
+from .quiz import QuizService
 from .service import DomainService
 from .storage import Database
+
+
+def _query_value(query: dict[str, list[str]], name: str) -> str:
+    value = query.get(name, [""])[0]
+    if not value:
+        raise ValidationError(f"{name} 不能为空")
+    return value
+
+
+def _quiz_route(service: QuizService, method: str, parsed, body: dict[str, Any],
+                actor_id: str) -> tuple[int, dict[str, Any]]:
+    """分派药材知识闯关模块的 HTTP 语义请求。"""
+
+    path = parsed.path
+    query = parse_qs(parsed.query)
+    if method == "POST" and path == "/quiz/banks":
+        receipt = service.create_bank(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/banks/questions":
+        receipt = service.add_question(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/banks/freeze":
+        receipt = service.freeze_bank(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/banks/withdraw":
+        receipt = service.withdraw_question(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/teams":
+        receipt = service.create_team(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/participants":
+        receipt = service.register_participant(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/participants/consent":
+        receipt = service.update_consent(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/sessions":
+        receipt = service.start_session(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/quiz/sessions/events":
+        return 200, service.submit_events(actor_id=actor_id, **body)
+    if method == "POST" and path == "/quiz/sessions/settle":
+        return 200, service.settle_session(actor_id=actor_id, **body)
+    if method == "POST" and path == "/quiz/conflicts/resolve":
+        receipt = service.resolve_conflict(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "GET" and path == "/quiz/banks":
+        return 200, {"items": service.list_banks(_query_value(query, "site_id"))}
+    if method == "GET" and path == "/quiz/banks/detail":
+        return 200, service.get_bank(_query_value(query, "bank_id"))
+    if method == "GET" and path == "/quiz/sessions/score":
+        return 200, service.session_score(_query_value(query, "session_id"))
+    if method == "GET" and path == "/quiz/sessions/progress":
+        return 200, service.session_progress(_query_value(query, "session_id"))
+    if method == "GET" and path == "/quiz/sessions/events":
+        return 200, service.session_events(_query_value(query, "session_id"))
+    if method == "GET" and path == "/quiz/sessions/sync":
+        return 200, service.session_sync(_query_value(query, "session_id"))
+    if method == "GET" and path == "/quiz/sessions/question":
+        return 200, service.question_view(_query_value(query, "session_id"),
+                                          _query_value(query, "question_id"))
+    if method == "GET" and path == "/quiz/conflicts":
+        return 200, {"items": service.list_conflicts(
+            site_id=query.get("site_id", [None])[0],
+            session_id=query.get("session_id", [None])[0],
+            status=query.get("status", [None])[0])}
+    if method == "GET" and path == "/quiz/leaderboard":
+        return 200, {"items": service.leaderboard(_query_value(query, "site_id"))}
+    if method == "GET" and path == "/quiz/teams/progress":
+        return 200, service.team_progress(_query_value(query, "team_id"))
+    return 404, {"error": "route_not_found", "message": "接口不存在"}
 
 
 def route(service: DomainService, method: str, path: str, body: dict[str, Any] | None,
@@ -48,6 +120,10 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+        if parsed.path.startswith("/quiz"):
+            if not isinstance(service, QuizService):
+                return 404, {"error": "route_not_found", "message": "接口不存在"}
+            return _quiz_route(service, method, parsed, body, actor_id)
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
@@ -99,7 +175,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     database = Database(args.database)
-    Handler.service = DomainService(database)
+    Handler.service = QuizService(database)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     try:
         server.serve_forever()
